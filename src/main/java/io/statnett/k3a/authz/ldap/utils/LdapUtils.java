@@ -21,6 +21,7 @@ public final class LdapUtils {
 
     private static final Logger LOG = Logger.getLogger(LdapUtils.class.getName());
     private static final char[] HEX_CHARS = "0123456789abcdef".toCharArray();
+    private static final String LDAP_MATCHING_RULE_IN_CHAIN_OID = "1.2.840.113556.1.4.1941";
 
     private LdapUtils() {
     }
@@ -106,8 +107,9 @@ public final class LdapUtils {
         final Set<String> set = new HashSet<>();
         final SearchControls sc = new SearchControls();
         sc.setSearchScope(SearchControls.SUBTREE_SCOPE);
-        sc.setReturningAttributes(new String[] { groupMemberOfField });
-        final String filter = "(" + String.format(usernameToUniqueSearchFormat, LdapUtils.escape(username)) + ")";
+        sc.setReturningAttributes(new String[] { groupMemberOfField, "member" });   // "member" is the attribute used when looking up indirect and direct memberships, could probably remove the former
+        // TODO: usernameToUniqueSearchFormat uses this formatter: `uid=%s`, which can be understood as UID, while we need the DN
+        final String filter = "(member:" + LDAP_MATCHING_RULE_IN_CHAIN_OID + ":=" + String.format(usernameToUniqueSearchFormat, LdapUtils.escape(username)) + ")";
         final NamingEnumeration<SearchResult> ne = ldap.search("", filter, sc);
         if (ne.hasMore()) {
             final SearchResult sr = ne.next();
