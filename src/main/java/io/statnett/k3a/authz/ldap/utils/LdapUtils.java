@@ -1,7 +1,5 @@
 package io.statnett.k3a.authz.ldap.utils;
 
-import org.w3c.dom.Attr;
-
 import javax.naming.AuthenticationException;
 import javax.naming.Context;
 import javax.naming.NamingEnumeration;
