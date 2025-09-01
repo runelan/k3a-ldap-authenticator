@@ -1,5 +1,7 @@
 package io.statnett.k3a.authz.ldap.utils;
 
+import org.w3c.dom.Attr;
+
 import javax.naming.AuthenticationException;
 import javax.naming.Context;
 import javax.naming.NamingEnumeration;
@@ -21,7 +23,6 @@ public final class LdapUtils {
 
     private static final Logger LOG = Logger.getLogger(LdapUtils.class.getName());
     private static final char[] HEX_CHARS = "0123456789abcdef".toCharArray();
-    private static final String LDAP_MATCHING_RULE_IN_CHAIN_OID = "1.2.840.113556.1.4.1941";
 
     private LdapUtils() {
     }
@@ -102,24 +103,64 @@ public final class LdapUtils {
         }
     }
 
+    private static String getUserDN(final LdapContext ldap, final String username, final String usernameToUniqueFormat) throws NamingException {
+        String userDN = "";
+        final SearchControls sc = new SearchControls();
+        sc.setSearchScope(SearchControls.SUBTREE_SCOPE);
+        final String filter = "(" + String.format(usernameToUniqueFormat, LdapUtils.escape(username)) + ")";
+        System.out.println("*** DEBUG: getUserDN filter: " + filter);
+        final NamingEnumeration<SearchResult> ne = ldap.search("", filter, sc);
+        if (ne.hasMore()) {
+            final SearchResult sr = ne.next();
+            userDN = sr.getNameInNamespace();
+        }
+        System.out.println("*** DEBUG: getUserDN result: " + userDN);
+        return userDN;
+    }
+
+    private static Set<String> getNestedGroup(final LdapContext ldap, final String groupDn) throws NamingException {
+        final Set<String> groups = new HashSet<>();
+        final SearchControls sc = new SearchControls();
+        sc.setSearchScope(SearchControls.SUBTREE_SCOPE);
+        sc.setReturningAttributes(new String[] { "member" });
+        final String filter = "(member=" + groupDn + ")";
+        System.out.println("*** DEBUG: getNestedGroup filter: " + filter);
+        final NamingEnumeration<SearchResult> ne = ldap.search("", filter, sc);
+        while (ne.hasMore()) {
+            final SearchResult sr = ne.next();
+            final String gr = sr.getNameInNamespace();
+            groups.add(gr);
+        }
+        System.out.println("*** DEBUG: getNestedGroup results: " + groups);
+        return groups;
+    }
+
     public static Set<String> findGroupsWithoutErrorHandling(final LdapContext ldap, final String username, final String groupMemberOfField, final String usernameToUniqueSearchFormat)
     throws NamingException {
+        final String userDN = getUserDN(ldap, username, usernameToUniqueSearchFormat);
+        if (userDN.isBlank()) {
+            throw new NamingException("DN for UID " + username + " not found");
+        }
         final Set<String> set = new HashSet<>();
         final SearchControls sc = new SearchControls();
         sc.setSearchScope(SearchControls.SUBTREE_SCOPE);
         sc.setReturningAttributes(new String[] { groupMemberOfField, "member" });   // "member" is the attribute used when looking up indirect and direct memberships, could probably remove the former
-        // TODO: usernameToUniqueSearchFormat uses this formatter: `uid=%s`, which can be understood as UID, while we need the DN
-        final String filter = "(member:" + LDAP_MATCHING_RULE_IN_CHAIN_OID + ":=" + String.format(usernameToUniqueSearchFormat, LdapUtils.escape(username)) + ")";
+        final String filter = "(member=" + userDN + ")";
         final NamingEnumeration<SearchResult> ne = ldap.search("", filter, sc);
         if (ne.hasMore()) {
             final SearchResult sr = ne.next();
             final Attributes attributes = sr.getAttributes();
             if (attributes != null) {
-                final Attribute attribute = attributes.get(groupMemberOfField);
+                final Attribute attribute = attributes.get("member");
                 if (attribute != null) {
                     final NamingEnumeration<?> allGroups = attribute.getAll();
                     while (allGroups.hasMore()) {
-                        set.add(allGroups.next().toString());
+                        final String group = allGroups.next().toString();
+                        set.add(group);
+                        final Set<String> nestedGroups = getNestedGroup(ldap, group);
+                        if(!nestedGroups.isEmpty()) {
+                            set.addAll(nestedGroups);
+                        }
                     }
                 }
             }
